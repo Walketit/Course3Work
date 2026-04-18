@@ -70,6 +70,108 @@ bool DatabaseManager::init(const std::string& dbPath) {
     return true;
 }
 
+bool DatabaseManager::registerUser(const std::string& username, const std::string& passwordHash) {
+    if (!db) return false;
+
+    // Знак '?' означает место, куда мы безопасно вставим переменную
+    const char* sql = "INSERT INTO users (username, password_hash) VALUES (?, ?);";
+    sqlite3_stmt* stmt = nullptr;
+
+    // Подготовка запроса (компиляция SQL)
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        Logger::getInstance().log("Ошибка подготовки запроса registerUser", LogLevel::ERROR);
+        return false;
+    }
+
+    // Привязка (Binding) переменных вместо знаков '?'
+    // SQLITE_TRANSIENT указывает SQLite сделать копию строки, чтобы избежать проблем с памятью
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, passwordHash.c_str(), -1, SQLITE_TRANSIENT);
+
+    // Выполнение запроса
+    bool success = false;
+    if (sqlite3_step(stmt) == SQLITE_DONE) {
+        success = true;
+        Logger::getInstance().log("Зарегистрирован новый пользователь: " + username, LogLevel::INFO);
+    } else {
+        // Скорее всего сработал UNIQUE constraint (такой логин уже есть)
+        Logger::getInstance().log("Не удалось зарегистрировать пользователя (возможно логин занят): " + username, LogLevel::WARNING);
+    }
+
+    // Очистка памяти запроса
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+int DatabaseManager::authenticateUser(const std::string& username, const std::string& passwordHash) {
+    if (!db) return -1;
+
+    const char* sql = "SELECT id FROM users WHERE username = ? AND password_hash = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    int userId = -1;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        Logger::getInstance().log("Ошибка подготовки запроса authenticateUser", LogLevel::ERROR);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, passwordHash.c_str(), -1, SQLITE_TRANSIENT);
+
+    // Если sqlite3_step возвращает SQLITE_ROW, значит найдена строка (пароль совпал)
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        userId = sqlite3_column_int(stmt, 0); // Берем значение из 0-й колонки (id)
+    }
+
+    sqlite3_finalize(stmt);
+    return userId;
+}
+
+int DatabaseManager::createPersonalChat() {
+    if (!db) return -1;
+
+    const char* sql = "INSERT INTO chats (type, name) VALUES ('personal', NULL);";
+    
+    // Выполняем простой запрос без параметров
+    if (sqlite3_exec(db, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        Logger::getInstance().log("Ошибка создания чата", LogLevel::ERROR);
+        return -1;
+    }
+
+    // Эта встроенная функция SQLite возвращает ID последней созданной записи
+    int chatId = sqlite3_last_insert_rowid(db);
+    Logger::getInstance().log("Создан новый чат с ID: " + std::to_string(chatId), LogLevel::INFO);
+    
+    return chatId;
+}
+
+bool DatabaseManager::saveMessage(int chatId, int senderId, const std::string& content) {
+    if (!db) return false;
+
+    const char* sql = "INSERT INTO messages (chat_id, sender_id, content) VALUES (?, ?, ?);";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        Logger::getInstance().log("Ошибка подготовки запроса saveMessage", LogLevel::ERROR);
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, chatId);
+    sqlite3_bind_int(stmt, 2, senderId);
+    sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_TRANSIENT);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+    
+    if (success) {
+        Logger::getInstance().log("Сообщение сохранено в чат " + std::to_string(chatId), LogLevel::DEBUG);
+    } else {
+        Logger::getInstance().log("Ошибка сохранения сообщения", LogLevel::ERROR);
+    }
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
 void DatabaseManager::close() {
     if (db) {
         sqlite3_close(db);
