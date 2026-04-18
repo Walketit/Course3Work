@@ -1,20 +1,30 @@
 #include "common/Logger.h"
 #include "server/DatabaseManager.h"
+#include <iostream>
 
 int main() {
     Logger::getInstance().log("Сервер запускается...");
 
-    // Инициализация базы данных
-    if (!DatabaseManager::getInstance().init("messenger.db")) {
-        Logger::getInstance().log("Критическая ошибка: невозможно инициализировать БД. Остановка сервера.", LogLevel::ERROR);
+    auto& db = DatabaseManager::getInstance();
+    if (!db.init("messenger.db")) {
         return 1;
     }
 
-    // Имитация работы сервера
-    Logger::getInstance().log("Ожидание подключений (пока не реализовано)...", LogLevel::DEBUG);
+    db.registerUser("admin", "secure_hash_1");
 
-    // Перед выходом корректно закрываем БД
-    DatabaseManager::getInstance().close();
-    
+    int myId = db.authenticateUser("admin", "secure_hash_1");
+    if (myId != -1) {
+        std::cout << "Успешный вход! Мой ID: " << myId << std::endl;
+        
+        // Создаем чат прямо из кода
+        int newChatId = db.createPersonalChat();
+        
+        if (newChatId != -1) {
+            // И теперь гарантированно успешно сохраняем в него сообщение!
+            db.saveMessage(newChatId, myId, "Привет из C++ кода! БД работает идеально."); 
+        }
+    }
+
+    db.close();
     return 0;
 }
