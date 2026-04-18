@@ -1,0 +1,27 @@
+# Сборка
+build/
+bin/
+*.o
+*.a
+*.so
+
+# Логи и БД
+logs/
+*.log
+*.db
+*.db-journal
+
+# IDE
+.vscode/
+.idea/
+cmake-build-debug/
+
+# Системные файлы
+.DS_Store
+
+# Doxygen
+docs/
+Doxyfile.bak
+
+# Diary
+Diary.txt
