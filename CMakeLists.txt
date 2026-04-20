@@ -22,6 +22,7 @@ add_executable(messenger_server
     src/server/main.cpp 
     src/common/Logger.cpp
     src/server/DatabaseManager.cpp
+    src/server/Server.cpp
 )
 
 # Клиентская часть
