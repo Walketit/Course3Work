@@ -1,6 +1,6 @@
 #include "server/Server.h"
 #include "common/Logger.h"
-
+#include "common/Packet.h"
 // Системные библиотеки POSIX для работы с сетью
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -85,19 +85,61 @@ void Server::start() {
 }
 
 void Server::handleClient(int clientSocket) {
-    Logger::getInstance().log("Поток запущен для сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
+    Logger::getInstance().log("Поток запущен для обслуживания сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
 
-    std::string welcomeMsg = "Привет! Ты в отдельном потоке. Ждем 10 секунд...\n";
-    send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+    // Сначала отправим приветствие
+    std::string welcome = "Добро пожаловать на сервер! Ожидаю ваш JSON пакет...\n";
+    send(clientSocket, welcome.c_str(), welcome.length() + 1, 0);
 
-    // Искусственная задержка, чтобы имитировать работу
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    // Буфер для приема данных
+    char buffer[4096];
+    memset(buffer, 0, sizeof(buffer));
 
-    std::string byeMsg = "Время вышло. Пока!\n";
-    send(clientSocket, byeMsg.c_str(), byeMsg.length(), 0);
+    // Читаем данные из сокета (recv блокирует поток, пока данные не придут)
+    ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
 
+    if (bytesRead > 0) {
+        std::string receivedData(buffer);
+        Logger::getInstance().log("Сырые данные от клиента: " + receivedData, LogLevel::DEBUG);
+
+        try {
+            // Десериализация: превращаем строку в объект Packet
+            Packet incomingPacket = Packet::deserialize(receivedData);
+
+            // Обработка в зависимости от типа пакета
+            if (incomingPacket.type == PacketType::SEND_MESSAGE) {
+                int senderId = incomingPacket.payload["sender_id"];
+                std::string text = incomingPacket.payload["text"];
+
+                Logger::getInstance().log("ПОЛУЧЕНО СООБЩЕНИЕ: [От ID " + std::to_string(senderId) + "]: " + text, LogLevel::INFO);
+
+                // Отправляем ответ клиенту, что всё прошло успешно
+                Packet response;
+                response.type = PacketType::SUCCESS_RESPONSE;
+                response.payload["status"] = "OK";
+                response.payload["info"] = "Сообщение обработано сервером";
+
+                std::string responseStr = response.serialize();
+                send(clientSocket, responseStr.c_str(), responseStr.length() + 1, 0);
+            }
+        } catch (const std::exception& e) {
+            Logger::getInstance().log("Ошибка обработки JSON: " + std::string(e.what()), LogLevel::ERROR);
+            
+            Packet error;
+            error.type = PacketType::ERROR_RESPONSE;
+            error.payload["message"] = "Неверный формат JSON";
+            std::string errorStr = error.serialize();
+            send(clientSocket, errorStr.c_str(), errorStr.length() + 1, 0);
+        }
+    } else if (bytesRead == 0) {
+        Logger::getInstance().log("Клиент разорвал соединение до отправки данных.", LogLevel::WARNING);
+    } else {
+        Logger::getInstance().log("Ошибка при чтении из сокета (recv).", LogLevel::ERROR);
+    }
+
+    // Завершение работы с клиентом
     close(clientSocket);
-    Logger::getInstance().log("Клиент отключен, поток завершен.", LogLevel::DEBUG);
+    Logger::getInstance().log("Поток завершен, сокет закрыт.", LogLevel::DEBUG);
 }
 
 void Server::stop() {
