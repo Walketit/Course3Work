@@ -32,6 +32,7 @@ add_executable(messenger_server
 add_executable(messenger_client 
     src/client/main.cpp 
     src/common/Logger.cpp
+    src/client/Client.cpp
 )
 
 target_link_libraries(messenger_server Threads::Threads)
