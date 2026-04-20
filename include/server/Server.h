@@ -1,3 +1,5 @@
+#include <thread>
+
 /**
  * @file Server.h
  * @brief Класс для управления сетевыми подключениями.
@@ -13,6 +15,13 @@ private:
     uint16_t port;
     int serverSocket; // Файловый дескриптор главного сокета
     bool isRunning;
+
+    /**
+     * @brief Метод для обслуживания конкретного клиента.
+     * Запускается в отдельном потоке.
+     * @param clientSocket Сокет подключенного клиента.
+     */
+    void handleClient(int clientSocket);
 public:
     /**
      * @brief Конструктор сервера.

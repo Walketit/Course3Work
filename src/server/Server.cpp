@@ -72,13 +72,32 @@ void Server::start() {
         }
 
         Logger::getInstance().log("Подключился новый клиент!", LogLevel::INFO);
-         
-        // Пока просто здороваемся с клиентом и сразу разрываем соединение.
-        std::string welcomeMsg = "Привет от C++ сервера!\n";
-        send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
         
-        close(clientSocket); // Закрываем клиентский сокет
+        // Реализация многопоточности
+        // Создаем новый поток, передаем ему указатель на метод handleClient, 
+        // объект сервера (this) и номер сокета клиента.
+        std::thread clientThread(&Server::handleClient, this, clientSocket);
+        
+        // detach() отрывает поток от основного управления. 
+        // Поток будет работать отдельно и сам очистит память, когда завершит работу.
+        clientThread.detach(); 
     }
+}
+
+void Server::handleClient(int clientSocket) {
+    Logger::getInstance().log("Поток запущен для сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
+
+    std::string welcomeMsg = "Привет! Ты в отдельном потоке. Ждем 10 секунд...\n";
+    send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+
+    // Искусственная задержка, чтобы имитировать работу
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+
+    std::string byeMsg = "Время вышло. Пока!\n";
+    send(clientSocket, byeMsg.c_str(), byeMsg.length(), 0);
+
+    close(clientSocket);
+    Logger::getInstance().log("Клиент отключен, поток завершен.", LogLevel::DEBUG);
 }
 
 void Server::stop() {

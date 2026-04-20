@@ -17,6 +17,9 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/logs)
 # Поиск библиотеки SQLite3
 find_package(SQLite3 REQUIRED)
 
+# Для работы с потоками (pthread) на UNIX
+find_package(Threads REQUIRED)
+
 # Серверная часть
 add_executable(messenger_server 
     src/server/main.cpp 
@@ -31,8 +34,6 @@ add_executable(messenger_client
     src/common/Logger.cpp
 )
 
-# Для работы с потоками (pthread) на UNIX
-find_package(Threads REQUIRED)
 target_link_libraries(messenger_server Threads::Threads)
 target_link_libraries(messenger_server SQLite::SQLite3)
 target_link_libraries(messenger_client Threads::Threads)
