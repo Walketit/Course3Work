@@ -1,30 +1,22 @@
 #include "common/Logger.h"
 #include "server/DatabaseManager.h"
+#include "server/Server.h"
 #include <iostream>
 
 int main() {
-    Logger::getInstance().log("Сервер запускается...");
+    Logger::getInstance().log("Инициализация сервера...");
 
+    // Подключаем БД
     auto& db = DatabaseManager::getInstance();
     if (!db.init("messenger.db")) {
         return 1;
     }
 
-    db.registerUser("admin", "secure_hash_1");
+    // Создаем и запускаем сетевой сервер на порту 8080
+    Server server(8080);
+    server.start(); // Программа зависнет внутри этого метода, бесконечно принимая клиентов
 
-    int myId = db.authenticateUser("admin", "secure_hash_1");
-    if (myId != -1) {
-        std::cout << "Успешный вход! Мой ID: " << myId << std::endl;
-        
-        // Создаем чат прямо из кода
-        int newChatId = db.createPersonalChat();
-        
-        if (newChatId != -1) {
-            // И теперь гарантированно успешно сохраняем в него сообщение!
-            db.saveMessage(newChatId, myId, "Привет из C++ кода! БД работает идеально."); 
-        }
-    }
-
+    // Сюда код дойдет только если сервер будет остановлен (server.stop())
     db.close();
     return 0;
 }
