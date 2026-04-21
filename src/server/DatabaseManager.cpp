@@ -254,6 +254,81 @@ bool DatabaseManager::addChatMember(int chatId, int userId) {
     return success;
 }
 
+std::vector<ChatInfo> DatabaseManager::getUserChats(int userId) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    std::vector<ChatInfo> chats;
+    if (!db) return chats;
+
+    // Берем чаты (c), в которых состоит наш пользователь (cm1)
+    // Ищем вторую запись в chat_members для этого же чата (cm2), где ID не равен нашему
+    // Берём логин этого второго пользователя из таблицы users (u)
+    const char* sql = R"(
+        SELECT c.id, u.username 
+        FROM chats c
+        JOIN chat_members cm1 ON c.id = cm1.chat_id
+        JOIN chat_members cm2 ON c.id = cm2.chat_id
+        JOIN users u ON cm2.user_id = u.id
+        WHERE c.type = 'personal' 
+          AND cm1.user_id = ? 
+          AND cm2.user_id != ?;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, userId);
+        sqlite3_bind_int(stmt, 2, userId);
+
+        // sqlite3_step возвращает SQLITE_ROW каждый раз, когда находит новую строку
+        // Поэтому используем цикл while, чтобы собрать весь список чатов
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            ChatInfo info;
+            info.chatId = sqlite3_column_int(stmt, 0);
+            
+            const unsigned char* nameText = sqlite3_column_text(stmt, 1);
+            info.chatName = nameText ? reinterpret_cast<const char*>(nameText) : "Unknown";
+            
+            chats.push_back(info);
+        }
+    } else {
+        Logger::getInstance().log("Ошибка подготовки запроса getUserChats", LogLevel::ERROR);
+    }
+    
+    sqlite3_finalize(stmt);
+    return chats;
+}
+
+std::vector<MessageInfo> DatabaseManager::getChatHistory(int chatId) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    std::vector<MessageInfo> history;
+    if (!db) return history;
+
+    // Сортировка ASC (Ascending) гарантирует, что старые сообщения будут первыми (сверху)
+    const char* sql = "SELECT sender_id, content, timestamp FROM messages WHERE chat_id = ? ORDER BY timestamp ASC;";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, chatId);
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            MessageInfo msg;
+            msg.senderId = sqlite3_column_int(stmt, 0);
+            
+            const unsigned char* contentText = sqlite3_column_text(stmt, 1);
+            msg.content = contentText ? reinterpret_cast<const char*>(contentText) : "";
+            
+            const unsigned char* timeText = sqlite3_column_text(stmt, 2);
+            msg.timestamp = timeText ? reinterpret_cast<const char*>(timeText) : "";
+
+            history.push_back(msg);
+        }
+    } else {
+        Logger::getInstance().log("Ошибка подготовки запроса getChatHistory", LogLevel::ERROR);
+    }
+    
+    sqlite3_finalize(stmt);
+    return history;
+}
+
 void DatabaseManager::close() {
     std::lock_guard<std::mutex> lock(dbMutex);
 

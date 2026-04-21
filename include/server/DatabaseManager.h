@@ -8,7 +8,21 @@
 #include <string>
 #include <sqlite3.h>
 #include <mutex>
+#include <vector>
 #include "common/Logger.h"
+
+// Структура для информации о чате в списке
+struct ChatInfo {
+    int chatId;
+    std::string chatName; // Логин собеседника
+};
+
+// Структура для одного сообщения из истории
+struct MessageInfo {
+    int senderId;
+    std::string content;
+    std::string timestamp;
+};
 
 /**
  * @brief Класс для управления базой данных (SQLite3).
@@ -92,6 +106,20 @@ public:
      * @return true при успешном сохранении.
      */
     bool addChatMember(int chatId, int userId);
+
+    /**
+     * @brief Получить список всех чатов пользователя (с именами собеседников).
+     * @param userId ID пользователя.
+     * @return chats, все существующие в БД чаты пользователя.
+     */
+    std::vector<ChatInfo> getUserChats(int userId);
+
+    /**
+     * @brief Получить историю сообщений конкретного чата.
+     * @param chatId ID чата.
+     * @return history, все сообщения чата.
+     */
+    std::vector<MessageInfo> getChatHistory(int chatId);
 };
 
 #endif
