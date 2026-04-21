@@ -1,6 +1,8 @@
 /**
  * @file Packet.h
  * @brief Структура сетевого пакета для обмена между клиентом и сервером.
+ * Этот файл определяет протокол, на котором общаются клиент и сервер.
+ * Использование JSON позволяет гибко добавлять новые поля без изменения бинарной структуры пакета.
  */
 #ifndef PACKET_H
 #define PACKET_H
@@ -15,17 +17,17 @@ using json = nlohmann::json;
  * @brief Перечисление типов сообщений.
  */
 enum class PacketType {
-    REGISTER,
-    LOGIN,
-    CREATE_CHAT,
-    SEND_MESSAGE,
-    NEW_MESSAGE, 
-    GET_CHATS,        
-    GET_CHAT_HISTORY,   
-    CHAT_LIST_RESPONSE, 
-    HISTORY_RESPONSE,    
-    ERROR_RESPONSE,
-    SUCCESS_RESPONSE
+    REGISTER,           // Запрос: Регистрация нового аккаунта
+    LOGIN,              // Запрос: Авторизация
+    CREATE_CHAT,        // Запрос: Создание нового диалога
+    SEND_MESSAGE,       // Запрос: Отправка сообщения на сервер
+    NEW_MESSAGE,        // Push-уведомление от сервера: входящее сообщение
+    GET_CHATS,          // Запрос: Получение списка диалогов
+    GET_CHAT_HISTORY,   // Запрос: Получение истории конкретного чата
+    CHAT_LIST_RESPONSE, // Ответ сервера со списком чатов
+    HISTORY_RESPONSE,   // Ответ сервера с массивом сообщений
+    ERROR_RESPONSE,     // Универсальный ответ об ошибке
+    SUCCESS_RESPONSE    // Универсальный ответ об успехе
 };
 
 /**
@@ -33,7 +35,7 @@ enum class PacketType {
  */
 struct Packet {
     PacketType type;
-    json payload; // Полезная нагрузка (любые данные в формате JSON)
+    json payload; // Динамическая полезная нагрузка. Может содержать любые ключи.
 
     // Превращаем структуру C++ в строку JSON (Сериализация)
     std::string serialize() const {
