@@ -1,5 +1,3 @@
-#include <thread>
-
 /**
  * @file Server.h
  * @brief Класс для управления сетевыми подключениями.
@@ -7,6 +5,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <thread>
 #include <cstdint>
 #include <string>
 
