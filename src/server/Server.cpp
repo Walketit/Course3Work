@@ -189,6 +189,45 @@ void Server::handleClient(int clientSocket) {
                     response.type = PacketType::ERROR_RESPONSE;
                     response.payload["message"] = "Ошибка БД при сохранении сообщения";
                 }
+            }
+            else if (incomingPacket.type == PacketType::GET_CHATS) {
+                int userId = incomingPacket.payload["user_id"];
+                
+                // Достаем вектор чатов из БД
+                auto chats = DatabaseManager::getInstance().getUserChats(userId);
+
+                // Формируем JSON-массив
+                json chatArray = json::array();
+                for (const auto& chat : chats) {
+                    chatArray.push_back({
+                        {"chat_id", chat.chatId}, 
+                        {"chat_name", chat.chatName}
+                    });
+                }
+
+                response.type = PacketType::CHAT_LIST_RESPONSE;
+                response.payload["chats"] = chatArray;
+                response.payload["message"] = "Список чатов получен";
+            }
+            else if (incomingPacket.type == PacketType::GET_CHAT_HISTORY) {
+                int chatId = incomingPacket.payload["chat_id"];
+                
+                // Достаем вектор сообщений из БД
+                auto history = DatabaseManager::getInstance().getChatHistory(chatId);
+
+                // Формируем JSON-массив сообщений
+                json historyArray = json::array();
+                for (const auto& msg : history) {
+                    historyArray.push_back({
+                        {"sender_id", msg.senderId},
+                        {"content", msg.content},
+                        {"timestamp", msg.timestamp}
+                    });
+                }
+
+                response.type = PacketType::HISTORY_RESPONSE;
+                response.payload["history"] = historyArray;
+                response.payload["message"] = "История сообщений получена";
             }           
 
             // Отправляем ответ обратно клиенту

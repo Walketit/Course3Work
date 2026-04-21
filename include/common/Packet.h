@@ -19,6 +19,11 @@ enum class PacketType {
     LOGIN,
     CREATE_CHAT,
     SEND_MESSAGE,
+    NEW_MESSAGE, 
+    GET_CHATS,        
+    GET_CHAT_HISTORY,   
+    CHAT_LIST_RESPONSE, 
+    HISTORY_RESPONSE,    
     ERROR_RESPONSE,
     SUCCESS_RESPONSE
 };
