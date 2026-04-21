@@ -274,6 +274,7 @@ std::vector<ChatInfo> DatabaseManager::getUserChats(int userId) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
+    // Подготовка запроса
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_int(stmt, 1, userId);
         sqlite3_bind_int(stmt, 2, userId);
@@ -293,6 +294,7 @@ std::vector<ChatInfo> DatabaseManager::getUserChats(int userId) {
         Logger::getInstance().log("Ошибка подготовки запроса getUserChats", LogLevel::ERROR);
     }
     
+    // Освобождение памяти выделенной под запрос
     sqlite3_finalize(stmt);
     return chats;
 }
@@ -327,6 +329,27 @@ std::vector<MessageInfo> DatabaseManager::getChatHistory(int chatId) {
     
     sqlite3_finalize(stmt);
     return history;
+}
+
+int DatabaseManager::getOtherChatMember(int chatId, int myUserId) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return -1;
+
+    // Ищем в таблице chat_members пользователя этого чата, ID которого не равен нашему
+    const char* sql = "SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?;";
+    sqlite3_stmt* stmt = nullptr;
+    int otherUserId = -1;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, chatId);
+        sqlite3_bind_int(stmt, 2, myUserId);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            otherUserId = sqlite3_column_int(stmt, 0);
+        }
+    }
+    sqlite3_finalize(stmt);
+    return otherUserId;
 }
 
 void DatabaseManager::close() {

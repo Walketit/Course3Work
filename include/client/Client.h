@@ -7,11 +7,26 @@
 
 #include <string>
 #include <cstdint>
+#include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include "common/Packet.h"
 
 class Client {
 private:
     int clientSocket;
     bool isConnected;
+
+    // Инструменты для многопоточности
+    std::thread listenerThread;           // Фоновый поток для прослушивания сети
+    std::queue<Packet> responseQueue;     // Очередь для хранения системных ответов (SUCCESS, ERROR и т.д.)
+    std::mutex queueMutex;                // Защищает responseQueue от одновременного доступа
+    std::condition_variable cv;           // Сигнализирует главному потоку о появлении новых данных в очереди
+    
+    // Внутренняя функция фонового потока
+    void listenLoop(std::function<void(const Packet&)> onNewMessage);
 public:
     Client();
     ~Client();
@@ -31,13 +46,15 @@ public:
 
     /**
      * @brief Отправка сериализованных данных на сервер.
+     * @param data Строка данных.
      */
     bool sendData(const std::string& data);
 
-    /**
-     * @brief Получение данных от сервера.
-     */
-    std::string receiveData();
+    // Запуск фонового потока, который слушает сеть. 
+    void startListening(std::function<void(const Packet&)> onNewMessage);
+    
+    // Метод для главного потока: уснуть и ждать ответа от сервера
+    Packet waitForResponse();
 };
 
 #endif

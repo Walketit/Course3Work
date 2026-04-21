@@ -1,17 +1,18 @@
 /**
  * @file main.cpp
- * @brief Главный файл клиентской части.
+ * @brief Главный файл клиентской части. Реализует машину состояний и консольный UI.
  */
 #include "client/Client.h"
 #include "common/Packet.h"
 #include <iostream>
 #include <string>
+#include <atomic>
 
-// Перечисление экранов (состояний) нашего приложения
+// Состояния интерфейса приложения
 enum class AppState {
-    AUTH,
-    MAIN_MENU,
-    IN_CHAT
+    AUTH,       // Экран логина/регистрации
+    MAIN_MENU,  // Экран списка чатов
+    IN_CHAT     // Экран внутри конкретного диалога
 };
 
 int main() {
@@ -20,11 +21,35 @@ int main() {
         return 1;
     }
 
-    AppState currentState = AppState::AUTH;
-    int myUserId = -1;
-    int myChatId = -1;
+    // std::atomic гарантирует, что чтение этих переменных из фонового потока (в onNewMessage)
+    // и запись в них из главного потока не приведут к состоянию гонки.
+    std::atomic<AppState> currentState{AppState::AUTH};
+    std::atomic<int> myUserId{-1};
+    std::atomic<int> myChatId{-1};
     std::string currentChatName = "";
 
+    // Callback-функция, которая будет асинхронно вызвана из потока listenLoop
+    auto onNewMessage = [&](const Packet& pkt) {
+        int chatId = pkt.payload["chat_id"];
+        int senderId = pkt.payload["sender_id"];
+        std::string text = pkt.payload["text"];
+
+        std::cout << "\n"; // Спускаемся на новую строку, чтобы не сломать ввод пользователя
+        
+        // Маршрутизация уведомления в зависимости от текущего экрана
+        if (currentState == AppState::IN_CHAT && chatId == myChatId) {
+            std::cout << "[Новое сообщение] " << currentChatName << ": " << text << "\n";
+        } else {
+            // Если мы в меню или в другом чате
+            std::cout << "[УВЕДОМЛЕНИЕ] Вам прислали сообщение в чат ID " << chatId << "!\n";
+        }
+        std::cout << "> " << std::flush; // Возвращаем стрелочку ввода
+    };
+
+    // Запуск асинхронного слушателя
+    client.startListening(onNewMessage);
+
+    // Главный цикл машины состояний (выполняется в главном потоке) 
     while (true) {
         if (currentState == AppState::AUTH) {
             std::cout << "\n=== АВТОРИЗАЦИЯ ===\n";
@@ -47,16 +72,15 @@ int main() {
             req.payload["password"] = pass;
             client.sendData(req.serialize());
 
-            std::string responseData = client.receiveData();
-            if (responseData.empty()) break;
+            // Ждем ответа из очереди пакетов
+            Packet resp = client.waitForResponse();
+            if (resp.type == PacketType::ERROR_RESPONSE && resp.payload.is_null()) break; // Сервер упал
 
-            Packet resp = Packet::deserialize(responseData);
             std::cout << ">>> " << resp.payload["message"].get<std::string>() << "\n";
 
-            // Если вход успешен, переходим в главное меню
             if (resp.type == PacketType::SUCCESS_RESPONSE && choice == 2) {
                 myUserId = resp.payload["user_id"];
-                currentState = AppState::MAIN_MENU;
+                currentState = AppState::MAIN_MENU; // Переход на основное меню при успешной аутентификации
             }
         } 
         else if (currentState == AppState::MAIN_MENU) {
@@ -66,22 +90,20 @@ int main() {
             if (!(std::cin >> choice)) break;
 
             if (choice == 3) {
-                myUserId = -1; // Сбрасываем сессию
+                myUserId = -1;
                 currentState = AppState::AUTH;
                 continue;
             }
 
             if (choice == 1) {
-                // Запрашиваем список чатов
                 Packet req;
                 req.type = PacketType::GET_CHATS;
-                req.payload["user_id"] = myUserId;
+                req.payload["user_id"] = (int)myUserId;
                 client.sendData(req.serialize());
 
-                std::string responseData = client.receiveData();
-                if (responseData.empty()) break;
+                Packet resp = client.waitForResponse();
+                if (resp.type == PacketType::ERROR_RESPONSE && resp.payload.is_null()) break;
                 
-                Packet resp = Packet::deserialize(responseData);
                 if (resp.type == PacketType::CHAT_LIST_RESPONSE) {
                     auto chats = resp.payload["chats"];
                     if (chats.empty()) {
@@ -101,7 +123,7 @@ int main() {
                     if (chatIdx > 0 && chatIdx <= chats.size()) {
                         myChatId = chats[chatIdx - 1]["chat_id"];
                         currentChatName = chats[chatIdx - 1]["chat_name"];
-                        currentState = AppState::IN_CHAT; // Переходим в окно чата
+                        currentState = AppState::IN_CHAT; // Переход в чат
                     }
                 }
             }
@@ -112,39 +134,35 @@ int main() {
 
                 Packet req;
                 req.type = PacketType::CREATE_CHAT;
-                req.payload["sender_id"] = myUserId;
+                req.payload["sender_id"] = (int)myUserId;
                 req.payload["target_username"] = targetUsername;
                 client.sendData(req.serialize());
 
-                std::string responseData = client.receiveData();
-                if (responseData.empty()) break;
+                Packet resp = client.waitForResponse();
+                if (resp.type == PacketType::ERROR_RESPONSE && resp.payload.is_null()) break;
 
-                Packet resp = Packet::deserialize(responseData);
                 std::cout << ">>> " << resp.payload["message"].get<std::string>() << "\n";
                 
                 if (resp.type == PacketType::SUCCESS_RESPONSE) {
                     myChatId = resp.payload["chat_id"];
                     currentChatName = targetUsername;
-                    currentState = AppState::IN_CHAT; // Сразу переходим в чат
+                    currentState = AppState::IN_CHAT;
                 }
             }
         }
         else if (currentState == AppState::IN_CHAT) {
-            // 1. При входе в это состояние всегда сначала запрашиваем историю
+            // Запрос истории при первом входе на экран чата
             Packet reqHistory;
             reqHistory.type = PacketType::GET_CHAT_HISTORY;
-            reqHistory.payload["chat_id"] = myChatId;
+            reqHistory.payload["chat_id"] = (int)myChatId;
             client.sendData(reqHistory.serialize());
 
-            std::string responseData = client.receiveData();
-            if (responseData.empty()) break;
+            Packet respHistory = client.waitForResponse();
+            if (respHistory.type == PacketType::ERROR_RESPONSE && respHistory.payload.is_null()) break;
 
-            Packet resp = Packet::deserialize(responseData);
-            
-            // 2. Отрисовываем историю
             std::cout << "\n=== ЧАТ: " << currentChatName << " ===\n";
-            if (resp.type == PacketType::HISTORY_RESPONSE) {
-                auto history = resp.payload["history"];
+            if (respHistory.type == PacketType::HISTORY_RESPONSE) {
+                auto history = respHistory.payload["history"];
                 if (history.empty()) {
                     std::cout << "Здесь пока нет сообщений...\n";
                 } else {
@@ -153,7 +171,6 @@ int main() {
                         std::string text = msg["content"];
                         std::string time = msg["timestamp"];
                         
-                        // Если ID отправителя совпадает с нашим, пишем "Вы", иначе имя собеседника
                         std::string author = (sender == myUserId) ? "Вы" : currentChatName;
                         std::cout << "[" << time << "] " << author << ": " << text << "\n";
                     }
@@ -161,30 +178,27 @@ int main() {
             }
             std::cout << "----------------------\n";
             
-            // 3. Ждем ввода сообщения (или специальных команд)
-            std::cout << "Введите сообщение ( /back - выйти, /update - обновить ):\n> ";
-            std::string text;
-            
-            // std::ws очищает лишние пробелы и переносы строк, оставшиеся в буфере после std::cin
-            std::getline(std::cin >> std::ws, text);
+            // Вложенный цикл чата (остаемся на этом экране, пока не введут /back)
+            while (currentState == AppState::IN_CHAT) {
+                std::cout << "Введите сообщение ( /back - выйти ):\n> ";
+                std::string text;
+                std::getline(std::cin >> std::ws, text);
 
-            if (text == "/back") {
-                currentState = AppState::MAIN_MENU; // Выходим из чата обратно в список
-                continue;
-            } else if (text == "/update") {
-                continue; // Цикл пойдет заново и просто подтянет новую историю
+                if (text == "/back") {
+                    currentState = AppState::MAIN_MENU;
+                    break; 
+                }
+
+                Packet reqSend;
+                reqSend.type = PacketType::SEND_MESSAGE;
+                reqSend.payload["sender_id"] = (int)myUserId;
+                reqSend.payload["chat_id"] = (int)myChatId;
+                reqSend.payload["text"] = text;
+                client.sendData(reqSend.serialize());
+
+                // Ждем техническое подтверждение (чтобы убедиться, что записалось в БД)
+                client.waitForResponse(); 
             }
-
-            // 4. Отправляем сообщение
-            Packet reqSend;
-            reqSend.type = PacketType::SEND_MESSAGE;
-            reqSend.payload["sender_id"] = myUserId;
-            reqSend.payload["chat_id"] = myChatId;
-            reqSend.payload["text"] = text;
-            client.sendData(reqSend.serialize());
-
-            // Ждем техническое подтверждение от сервера, чтобы не рассинхронизироваться
-            client.receiveData(); 
         }
     }
 

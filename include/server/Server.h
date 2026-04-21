@@ -8,12 +8,20 @@
 #include <thread>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
+#include <mutex>
 
 class Server {
 private:
     uint16_t port;
     int serverSocket; // Файловый дескриптор главного сокета
     bool isRunning;
+    
+    // Таблица маршрутизации
+    // Хранит соответствие: ID авторизованного пользователя -> дескриптор его активного сокета.
+    // Это позволяет серверу пересылать сообщения нужным клиентам в реальном времени.
+    std::unordered_map<int, int> activeClients; 
+    std::mutex clientsMutex;                   
 
     /**
      * @brief Метод для обслуживания конкретного клиента.

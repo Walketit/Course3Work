@@ -25,8 +25,7 @@ void Server::start() {
         return;
     }
 
-    // Настройка сокета (SO_REUSEADDR)
-    // Если сервер упадет, ОС может заморозить порт на пару минут.
+    // SO_REUSEADDR предотвращает ошибку "Address already in use" при быстром перезапуске сервера
     int opt = 1;
     if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         Logger::getInstance().log("Ошибка настройки setsockopt", LogLevel::ERROR);
@@ -88,6 +87,8 @@ void Server::start() {
 void Server::handleClient(int clientSocket) {
     Logger::getInstance().log("Поток запущен для сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
 
+    // Локальное состояние сессии: сервер знает, кто именно сидит на этом сокете
+    int currentUserId = -1;
     char buffer[4096];
 
     // Бесконечный цикл обработки (пока клиент не отключится)
@@ -110,6 +111,7 @@ void Server::handleClient(int clientSocket) {
 
             // Маршрутизация пакетов
             
+            // Регистрация нового пользователя
             if (incomingPacket.type == PacketType::REGISTER) {
                 std::string username = incomingPacket.payload["username"];
                 std::string password = incomingPacket.payload["password"];
@@ -122,12 +124,21 @@ void Server::handleClient(int clientSocket) {
                     response.payload["message"] = "Ошибка: Логин уже занят.";
                 }
             } 
+            // Авторизация пользователя
             else if (incomingPacket.type == PacketType::LOGIN) {
                 std::string username = incomingPacket.payload["username"];
                 std::string password = incomingPacket.payload["password"];
                 
                 int userId = DatabaseManager::getInstance().authenticateUser(username, password);
                 if (userId != -1) {
+                    currentUserId = userId; // Авторизация прошла успешно, запоминаем ID
+
+                    // Регистрируем сокет в глобальной таблице маршрутизации
+                    {
+                        std::lock_guard<std::mutex> lock(clientsMutex);
+                        activeClients[userId] = clientSocket;
+                    }
+                    
                     response.type = PacketType::SUCCESS_RESPONSE;
                     response.payload["user_id"] = userId;
                     response.payload["message"] = "Успешный вход!";
@@ -136,6 +147,7 @@ void Server::handleClient(int clientSocket) {
                     response.payload["message"] = "Неверный логин или пароль.";
                 }
             }
+            // Создание нового чата
             else if (incomingPacket.type == PacketType::CREATE_CHAT) {
                 int senderId = incomingPacket.payload["sender_id"];
                 std::string targetUsername = incomingPacket.payload["target_username"];
@@ -180,16 +192,44 @@ void Server::handleClient(int clientSocket) {
                 int chatId = incomingPacket.payload["chat_id"];
                 std::string text = incomingPacket.payload["text"];
 
+                // Атомарное сохранение в базу данных
                 bool isSaved = DatabaseManager::getInstance().saveMessage(chatId, senderId, text);
                 if (isSaved) {
                     response.type = PacketType::SUCCESS_RESPONSE;
                     response.payload["status"] = "OK";
                     response.payload["message"] = "Сообщение сохранено";
+                    int targetUserId = DatabaseManager::getInstance().getOtherChatMember(chatId, senderId);
+                    
+                    if (targetUserId != -1) {
+                        int targetSocket = -1;
+                        
+                        // Ищем, подключен ли получатель прямо сейчас
+                        {
+                            std::lock_guard<std::mutex> lock(clientsMutex);
+                            if (activeClients.find(targetUserId) != activeClients.end()) {
+                                targetSocket = activeClients[targetUserId];
+                            }
+                        }
+
+                        // Если получатель онлайн, отправляем ему пакет NEW_MESSAGE в его сокет
+                        if (targetSocket != -1) {
+                            Packet pushPacket;
+                            pushPacket.type = PacketType::NEW_MESSAGE;
+                            pushPacket.payload["chat_id"] = chatId;
+                            pushPacket.payload["sender_id"] = senderId;
+                            pushPacket.payload["text"] = text;
+
+                            std::string pushStr = pushPacket.serialize();
+                            send(targetSocket, pushStr.c_str(), pushStr.length() + 1, 0);
+                            Logger::getInstance().log("Сообщение переслано пользователю " + std::to_string(targetUserId), LogLevel::INFO);
+                        }
+                    }
                 } else {
                     response.type = PacketType::ERROR_RESPONSE;
                     response.payload["message"] = "Ошибка БД при сохранении сообщения";
                 }
             }
+            // Запрос клиента на получение списка его чатов.
             else if (incomingPacket.type == PacketType::GET_CHATS) {
                 int userId = incomingPacket.payload["user_id"];
                 
@@ -209,6 +249,7 @@ void Server::handleClient(int clientSocket) {
                 response.payload["chats"] = chatArray;
                 response.payload["message"] = "Список чатов получен";
             }
+            // Запрос клиента на получение списка сообщений в выбранном чате.
             else if (incomingPacket.type == PacketType::GET_CHAT_HISTORY) {
                 int chatId = incomingPacket.payload["chat_id"];
                 
@@ -242,6 +283,13 @@ void Server::handleClient(int clientSocket) {
             std::string errorStr = error.serialize();
             send(clientSocket, errorStr.c_str(), errorStr.length() + 1, 0);
         }
+    }
+
+    // При отключении удаляем из таблицы маршрутизации
+    if (currentUserId != -1) {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        activeClients.erase(currentUserId);
+        Logger::getInstance().log("Пользователь " + std::to_string(currentUserId) + " удален из таблицы маршрутизации.", LogLevel::INFO);
     }
 
     close(clientSocket);

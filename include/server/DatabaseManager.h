@@ -56,18 +56,18 @@ public:
     /**
      * @brief Регистрация нового пользователя.
      * @param username Логин.
-     * @param passwordHash Хэш пароля.
+     * @param password Пароль.
      * @return true в случае успеха, false если пользователь уже существует или произошла ошибка.
      */
-    bool registerUser(const std::string& username, const std::string& passwordHash);
+    bool registerUser(const std::string& username, const std::string& password);
 
     /**
-     * @brief Проверка учетных данных пользователя (Авторизация).
+     * @brief Авторизация пользователя.
      * @param username Логин.
-     * @param passwordHash Хэш пароля.
+     * @param password Пароль.
      * @return ID пользователя (>0) при успехе, -1 при неверном логине/пароле.
      */
-    int authenticateUser(const std::string& username, const std::string& passwordHash);
+    int authenticateUser(const std::string& username, const std::string& password);
 
     /**
      * @brief Создает новый личный чат.
@@ -120,6 +120,14 @@ public:
      * @return history, все сообщения чата.
      */
     std::vector<MessageInfo> getChatHistory(int chatId);
+
+    /**
+     * @brief Получить ID второго пользователя личного чата
+     * @param chatId ID чата.
+     * @param myUserId ID первого пользователя.
+     * @return ID второго пользователя.
+     */
+    int getOtherChatMember(int chatId, int myUserId);
 };
 
 #endif

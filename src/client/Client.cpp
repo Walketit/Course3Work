@@ -22,7 +22,7 @@ bool Client::connectToServer(const std::string& ip, uint16_t port) {
     // Настраиваем адрес сервера
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(port);
+    serverAddress.sin_port = htons(port); // Перевод порта в сетевой порядок байт
 
     // inet_pton (Presentation to Network) конвертирует строку IP в байты
     if (inet_pton(AF_INET, ip.c_str(), &serverAddress.sin_addr) <= 0) {
@@ -47,6 +47,8 @@ void Client::disconnect() {
         clientSocket = -1;
         isConnected = false;
         std::cout << "[INFO] Отключено от сервера." << std::endl;
+        // Пробуждаем главный поток, если он завис в ожидании, чтобы он мог корректно завершиться
+        cv.notify_all();
     }
 }
 
@@ -58,20 +60,68 @@ bool Client::sendData(const std::string& data) {
     return bytesSent > 0;
 }
 
-std::string Client::receiveData() {
-    if (!isConnected) return "";
-
-    char buffer[4096]; // Буфер для приема сообщений (4 Килобайта)
-    memset(buffer, 0, sizeof(buffer));
-
-    // recv блокирует программу, пока сервер что-нибудь не пришлет
-    ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+void Client::startListening(std::function<void(const Packet&)> onNewMessage) {
+    if (!isConnected) return;
     
-    if (bytesRead > 0) {
-        return std::string(buffer); // Превращаем массив char обратно в std::string
-    } else {
-        std::cerr << "[INFO] Сервер разорвал соединение." << std::endl;
-        disconnect();
-        return "";
+    // Запускаем поток, передавая указатель на метод listenLoop и нашу callback-функцию
+    listenerThread = std::thread(&Client::listenLoop, this, onNewMessage);
+    listenerThread.detach(); // Отрываем поток, пусть работает в фоне
+}
+
+void Client::listenLoop(std::function<void(const Packet&)> onNewMessage) {
+    char buffer[4096]; // 4КБ буфер для входящих JSON-строк
+    
+    while (isConnected) {
+        memset(buffer, 0, sizeof(buffer));
+        // Блокирующий вызов, поток засыпает здесь до прихода данных
+        ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+
+        if (bytesRead > 0) {
+            try {
+                std::string receivedData(buffer);
+                Packet incomingPacket = Packet::deserialize(receivedData);
+
+                // Диспетчеризация пакетов (Маршрутизатор на стороне клиента)
+                if (incomingPacket.type == PacketType::NEW_MESSAGE) {
+                    // Асинхронное событие, немедленно вызываем callback для обновления UI
+                    if (onNewMessage) {
+                        onNewMessage(incomingPacket);
+                    }
+                } else {
+                    // Это ответ на запрос главного потока. Кладем в очередь.
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    responseQueue.push(incomingPacket);
+                    cv.notify_one(); // Будим главный поток, висящий в waitForResponse()
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "[ОШИБКА КЛИЕНТА] Не удалось распарсить пакет: " << e.what() << std::endl;
+            }
+        } else {
+            // Ошибка сети или сервер отключился
+            std::cerr << "\n[СИСТЕМА] Потеряно соединение с сервером.\n";
+            isConnected = false;
+            cv.notify_all(); // Разблокируем главный поток при обрыве сети
+            break;
+        }
     }
+}
+
+Packet Client::waitForResponse() {
+    std::unique_lock<std::mutex> lock(queueMutex);
+    
+    // Поток спит, пока очередь пуста И клиент подключен. 
+    // Лямбда-выражение предотвращает ложные пробуждения
+    cv.wait(lock, [this]() { return !responseQueue.empty() || !isConnected; });
+
+    if (!isConnected && responseQueue.empty()) {
+        Packet errorPacket;
+        errorPacket.type = PacketType::ERROR_RESPONSE;
+        return errorPacket;
+    }
+
+    // Забираем пакет из очереди
+    Packet resp = responseQueue.front();
+    responseQueue.pop();
+    
+    return resp;
 }
