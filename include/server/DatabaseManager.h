@@ -7,6 +7,7 @@
 
 #include <string>
 #include <sqlite3.h>
+#include <mutex>
 #include "common/Logger.h"
 
 /**
@@ -22,6 +23,7 @@ private:
     DatabaseManager& operator=(const DatabaseManager&) = delete;
 
     sqlite3* db = nullptr; // Указатель на объект базы данных SQLite
+    std::mutex dbMutex;
 public:
     static DatabaseManager& getInstance();
 
@@ -60,6 +62,14 @@ public:
     int createPersonalChat();
 
     /**
+     * @brief Найти существующий личный чат между двумя пользователями.
+     * @param user1Id ID первого пользователя
+     * @param user2Id ID второго пользователя 
+     * @return ID чата пользователей при успехе, -1 если нет.
+     */
+    int getPersonalChat(int user1Id, int user2Id);
+
+    /**
      * @brief Сохранение сообщения в базу данных.
      * @param chatId ID чата.
      * @param senderId ID отправителя.
@@ -68,6 +78,20 @@ public:
      */
     bool saveMessage(int chatId, int senderId, const std::string& content);
 
+    /**
+     * @brief Получение ID пользователя по логину
+     * @param username Логин
+     * @return возвращает ID пользователя, либо (-1).
+     */
+    int getUserIdByUsername(const std::string& username);
+    
+    /**
+     * @brief Добавление пользователя в состав чата.
+     * @param chatId ID чата.
+     * @param userId ID пользователя.
+     * @return true при успешном сохранении.
+     */
+    bool addChatMember(int chatId, int userId);
 };
 
 #endif

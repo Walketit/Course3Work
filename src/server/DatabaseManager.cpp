@@ -71,6 +71,11 @@ bool DatabaseManager::init(const std::string& dbPath) {
 }
 
 bool DatabaseManager::registerUser(const std::string& username, const std::string& passwordHash) {
+    // Как только создается lock_guard, он захватывает мьютекс.
+    // Если другой поток уже держит мьютекс, этот поток заснет на этой строчке
+    // и будет ждать своей очереди.
+    std::lock_guard<std::mutex> lock(dbMutex);
+
     if (!db) return false;
 
     // Знак '?' означает место, куда мы безопасно вставим переменную
@@ -104,6 +109,8 @@ bool DatabaseManager::registerUser(const std::string& username, const std::strin
 }
 
 int DatabaseManager::authenticateUser(const std::string& username, const std::string& passwordHash) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+
     if (!db) return -1;
 
     const char* sql = "SELECT id FROM users WHERE username = ? AND password_hash = ?;";
@@ -128,6 +135,8 @@ int DatabaseManager::authenticateUser(const std::string& username, const std::st
 }
 
 int DatabaseManager::createPersonalChat() {
+    std::lock_guard<std::mutex> lock(dbMutex);
+
     if (!db) return -1;
 
     const char* sql = "INSERT INTO chats (type, name) VALUES ('personal', NULL);";
@@ -145,7 +154,42 @@ int DatabaseManager::createPersonalChat() {
     return chatId;
 }
 
+int DatabaseManager::getPersonalChat(int user1Id, int user2Id) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return -1;
+
+    // Ищем чат типа 'personal', к которому привязаны записи
+    // из таблицы chat_members как для user1, так и для user2 одновременно.
+    const char* sql = R"(
+        SELECT c.id 
+        FROM chats c
+        JOIN chat_members cm1 ON c.id = cm1.chat_id
+        JOIN chat_members cm2 ON c.id = cm2.chat_id
+        WHERE c.type = 'personal' 
+          AND cm1.user_id = ? 
+          AND cm2.user_id = ?;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int chatId = -1;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, user1Id);
+        sqlite3_bind_int(stmt, 2, user2Id);
+
+        // Если нашли совпадение, забираем ID этого чата
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            chatId = sqlite3_column_int(stmt, 0); 
+        }
+    }
+    
+    sqlite3_finalize(stmt);
+    return chatId; // Вернет -1, если такого чата нет
+}
+
 bool DatabaseManager::saveMessage(int chatId, int senderId, const std::string& content) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    
     if (!db) return false;
 
     const char* sql = "INSERT INTO messages (chat_id, sender_id, content) VALUES (?, ?, ?);";
@@ -172,7 +216,47 @@ bool DatabaseManager::saveMessage(int chatId, int senderId, const std::string& c
     return success;
 }
 
+int DatabaseManager::getUserIdByUsername(const std::string& username) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return -1;
+
+    const char* sql = "SELECT id FROM users WHERE username = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    int userId = -1;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            userId = sqlite3_column_int(stmt, 0);
+        }
+    }
+    sqlite3_finalize(stmt);
+    return userId;
+}
+
+bool DatabaseManager::addChatMember(int chatId, int userId) {
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return false;
+
+    const char* sql = "INSERT INTO chat_members (chat_id, user_id) VALUES (?, ?);";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, chatId);
+    sqlite3_bind_int(stmt, 2, userId);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return success;
+}
+
 void DatabaseManager::close() {
+    std::lock_guard<std::mutex> lock(dbMutex);
+
     if (db) {
         sqlite3_close(db);
         db = nullptr;
