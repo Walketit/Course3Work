@@ -17,6 +17,7 @@ using json = nlohmann::json;
 enum class PacketType {
     REGISTER,
     LOGIN,
+    CREATE_CHAT,
     SEND_MESSAGE,
     ERROR_RESPONSE,
     SUCCESS_RESPONSE

@@ -1,4 +1,5 @@
 #include "server/Server.h"
+#include "server/DatabaseManager.h"
 #include "common/Logger.h"
 #include "common/Packet.h"
 // Системные библиотеки POSIX для работы с сетью
@@ -85,61 +86,127 @@ void Server::start() {
 }
 
 void Server::handleClient(int clientSocket) {
-    Logger::getInstance().log("Поток запущен для обслуживания сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
+    Logger::getInstance().log("Поток запущен для сокета " + std::to_string(clientSocket), LogLevel::DEBUG);
 
-    // Сначала отправим приветствие
-    std::string welcome = "Добро пожаловать на сервер! Ожидаю ваш JSON пакет...\n";
-    send(clientSocket, welcome.c_str(), welcome.length() + 1, 0);
-
-    // Буфер для приема данных
     char buffer[4096];
-    memset(buffer, 0, sizeof(buffer));
 
-    // Читаем данные из сокета (recv блокирует поток, пока данные не придут)
-    ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+    // Бесконечный цикл обработки (пока клиент не отключится)
+    while (true) {
+        memset(buffer, 0, sizeof(buffer));
+        ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
 
-    if (bytesRead > 0) {
+        if (bytesRead <= 0) {
+            // Если bytesRead == 0, клиент штатно закрыл соединение. Если < 0 - ошибка сети.
+            Logger::getInstance().log("Клиент отключился (сокет " + std::to_string(clientSocket) + ")", LogLevel::INFO);
+            break; // Выходим из цикла, завершаем поток
+        }
+
         std::string receivedData(buffer);
-        Logger::getInstance().log("Сырые данные от клиента: " + receivedData, LogLevel::DEBUG);
+        Logger::getInstance().log("Сырые данные: " + receivedData, LogLevel::DEBUG);
 
         try {
-            // Десериализация: превращаем строку в объект Packet
             Packet incomingPacket = Packet::deserialize(receivedData);
+            Packet response;
 
-            // Обработка в зависимости от типа пакета
-            if (incomingPacket.type == PacketType::SEND_MESSAGE) {
+            // Маршрутизация пакетов
+            
+            if (incomingPacket.type == PacketType::REGISTER) {
+                std::string username = incomingPacket.payload["username"];
+                std::string password = incomingPacket.payload["password"];
+                
+                if (DatabaseManager::getInstance().registerUser(username, password)) {
+                    response.type = PacketType::SUCCESS_RESPONSE;
+                    response.payload["message"] = "Регистрация успешна!";
+                } else {
+                    response.type = PacketType::ERROR_RESPONSE;
+                    response.payload["message"] = "Ошибка: Логин уже занят.";
+                }
+            } 
+            else if (incomingPacket.type == PacketType::LOGIN) {
+                std::string username = incomingPacket.payload["username"];
+                std::string password = incomingPacket.payload["password"];
+                
+                int userId = DatabaseManager::getInstance().authenticateUser(username, password);
+                if (userId != -1) {
+                    response.type = PacketType::SUCCESS_RESPONSE;
+                    response.payload["user_id"] = userId;
+                    response.payload["message"] = "Успешный вход!";
+                } else {
+                    response.type = PacketType::ERROR_RESPONSE;
+                    response.payload["message"] = "Неверный логин или пароль.";
+                }
+            }
+            else if (incomingPacket.type == PacketType::CREATE_CHAT) {
                 int senderId = incomingPacket.payload["sender_id"];
+                std::string targetUsername = incomingPacket.payload["target_username"];
+
+                int targetId = DatabaseManager::getInstance().getUserIdByUsername(targetUsername);
+
+                if (targetId == -1) {
+                    response.type = PacketType::ERROR_RESPONSE;
+                    response.payload["message"] = "Пользователь '" + targetUsername + "' не найден.";
+                } else if (senderId == targetId) {
+                    response.type = PacketType::ERROR_RESPONSE;
+                    response.payload["message"] = "Нельзя создать чат с самим собой.";
+                } else {
+                    // Сначала проверяем существует ли чат между этими пользователями,
+                    // если нет, создаём новый
+                    int existingChatId = DatabaseManager::getInstance().getPersonalChat(senderId, targetId);
+
+                    if (existingChatId != -1) {
+                        // Чат уже существует, выдаем его ID без создания нового
+                        response.type = PacketType::SUCCESS_RESPONSE;
+                        response.payload["chat_id"] = existingChatId;
+                        response.payload["message"] = "Чат с " + targetUsername + " уже существует. Вы вошли в него.";
+                    } else {
+                        // Чата нет, создаем новый
+                        int newChatId = DatabaseManager::getInstance().createPersonalChat();
+                        if (newChatId != -1) {
+                            DatabaseManager::getInstance().addChatMember(newChatId, senderId);
+                            DatabaseManager::getInstance().addChatMember(newChatId, targetId);
+
+                            response.type = PacketType::SUCCESS_RESPONSE;
+                            response.payload["chat_id"] = newChatId;
+                            response.payload["message"] = "Чат с " + targetUsername + " успешно создан!";
+                        } else {
+                            response.type = PacketType::ERROR_RESPONSE;
+                            response.payload["message"] = "Ошибка БД при создании чата.";
+                        }
+                    }
+                }
+            }
+            else if (incomingPacket.type == PacketType::SEND_MESSAGE) {
+                int senderId = incomingPacket.payload["sender_id"];
+                int chatId = incomingPacket.payload["chat_id"];
                 std::string text = incomingPacket.payload["text"];
 
-                Logger::getInstance().log("ПОЛУЧЕНО СООБЩЕНИЕ: [От ID " + std::to_string(senderId) + "]: " + text, LogLevel::INFO);
+                bool isSaved = DatabaseManager::getInstance().saveMessage(chatId, senderId, text);
+                if (isSaved) {
+                    response.type = PacketType::SUCCESS_RESPONSE;
+                    response.payload["status"] = "OK";
+                    response.payload["message"] = "Сообщение сохранено";
+                } else {
+                    response.type = PacketType::ERROR_RESPONSE;
+                    response.payload["message"] = "Ошибка БД при сохранении сообщения";
+                }
+            }           
 
-                // Отправляем ответ клиенту, что всё прошло успешно
-                Packet response;
-                response.type = PacketType::SUCCESS_RESPONSE;
-                response.payload["status"] = "OK";
-                response.payload["info"] = "Сообщение обработано сервером";
+            // Отправляем ответ обратно клиенту
+            std::string responseStr = response.serialize();
+            send(clientSocket, responseStr.c_str(), responseStr.length() + 1, 0);
 
-                std::string responseStr = response.serialize();
-                send(clientSocket, responseStr.c_str(), responseStr.length() + 1, 0);
-            }
         } catch (const std::exception& e) {
-            Logger::getInstance().log("Ошибка обработки JSON: " + std::string(e.what()), LogLevel::ERROR);
-            
+            Logger::getInstance().log("Ошибка JSON: " + std::string(e.what()), LogLevel::ERROR);
             Packet error;
             error.type = PacketType::ERROR_RESPONSE;
-            error.payload["message"] = "Неверный формат JSON";
+            error.payload["message"] = "Неверный формат пакета";
             std::string errorStr = error.serialize();
             send(clientSocket, errorStr.c_str(), errorStr.length() + 1, 0);
         }
-    } else if (bytesRead == 0) {
-        Logger::getInstance().log("Клиент разорвал соединение до отправки данных.", LogLevel::WARNING);
-    } else {
-        Logger::getInstance().log("Ошибка при чтении из сокета (recv).", LogLevel::ERROR);
     }
 
-    // Завершение работы с клиентом
     close(clientSocket);
-    Logger::getInstance().log("Поток завершен, сокет закрыт.", LogLevel::DEBUG);
+    Logger::getInstance().log("Поток завершен.", LogLevel::DEBUG);
 }
 
 void Server::stop() {
