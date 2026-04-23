@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(CourseWork)
 
-# Стандарт C++17 для современных фич
+# Стандарт C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Отладка для проверки на утечку памяти
@@ -17,7 +17,7 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/logs)
 # Поиск библиотеки SQLite3
 find_package(SQLite3 REQUIRED)
 
-# Для работы с потоками (pthread) на UNIX
+# Для работы с потоками
 find_package(Threads REQUIRED)
 
 # Серверная часть
@@ -28,6 +28,12 @@ add_executable(messenger_server
     src/server/Server.cpp
 )
 
+set(CURSES_NEED_WIDE TRUE)
+
+# Поиск библиотеки ncurses
+find_package(Curses REQUIRED)
+include_directories(${CURSES_INCLUDE_DIR})
+
 # Клиентская часть
 add_executable(messenger_client 
     src/client/main.cpp 
@@ -37,4 +43,5 @@ add_executable(messenger_client
 
 target_link_libraries(messenger_server Threads::Threads)
 target_link_libraries(messenger_server SQLite::SQLite3)
-target_link_libraries(messenger_client Threads::Threads)
+target_link_libraries(messenger_client PRIVATE Threads::Threads)
+target_link_libraries(messenger_client PRIVATE ${CURSES_LIBRARIES})

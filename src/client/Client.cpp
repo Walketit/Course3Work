@@ -43,12 +43,19 @@ bool Client::connectToServer(const std::string& ip, uint16_t port) {
 
 void Client::disconnect() {
     if (isConnected) {
+        // Закрываем сокет. Это мгновенно прервет функцию recv() в фоновом потоке.
+        shutdown(clientSocket, SHUT_RDWR);
         close(clientSocket);
         clientSocket = -1;
         isConnected = false;
-        std::cout << "[INFO] Отключено от сервера." << std::endl;
-        // Пробуждаем главный поток, если он завис в ожидании, чтобы он мог корректно завершиться
-        cv.notify_all();
+        
+        // Будим главный поток, если он вдруг завис в waitForResponse
+        cv.notify_all(); 
+    }
+
+    // Ждем, пока фоновый поток безопасно завершит свой цикл while и выйдет
+    if (listenerThread.joinable()) {
+        listenerThread.join();
     }
 }
 
@@ -63,9 +70,8 @@ bool Client::sendData(const std::string& data) {
 void Client::startListening(std::function<void(const Packet&)> onNewMessage) {
     if (!isConnected) return;
     
-    // Запускаем поток, передавая указатель на метод listenLoop и нашу callback-функцию
+    // Запускаем поток, передавая указатель на метод listenLoop и callback-функцию
     listenerThread = std::thread(&Client::listenLoop, this, onNewMessage);
-    listenerThread.detach(); // Отрываем поток, пусть работает в фоне
 }
 
 void Client::listenLoop(std::function<void(const Packet&)> onNewMessage) {
@@ -88,7 +94,7 @@ void Client::listenLoop(std::function<void(const Packet&)> onNewMessage) {
                         onNewMessage(incomingPacket);
                     }
                 } else {
-                    // Это ответ на запрос главного потока. Кладем в очередь.
+                    // Иначе это ответ на запрос главного потока. Кладем в очередь.
                     std::lock_guard<std::mutex> lock(queueMutex);
                     responseQueue.push(incomingPacket);
                     cv.notify_one(); // Будим главный поток, висящий в waitForResponse()
@@ -109,7 +115,7 @@ void Client::listenLoop(std::function<void(const Packet&)> onNewMessage) {
 Packet Client::waitForResponse() {
     std::unique_lock<std::mutex> lock(queueMutex);
     
-    // Поток спит, пока очередь пуста И клиент подключен. 
+    // Поток спит, пока очередь пуста И клиент подключен
     // Лямбда-выражение предотвращает ложные пробуждения
     cv.wait(lock, [this]() { return !responseQueue.empty() || !isConnected; });
 

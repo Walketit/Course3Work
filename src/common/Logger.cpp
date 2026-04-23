@@ -55,8 +55,7 @@ void Logger::log(const std::string& message, LogLevel level) {
     std::lock_guard<std::mutex> lock(logMutex);
     
     // Формируем строку лога
-    std::string formattedMessage = "[" + getCurrentTimestamp() + "] [" + 
-                                   levelToString(level) + "] " + message;
+    std::string formattedMessage = "[" + getCurrentTimestamp() + "] [" + levelToString(level) + "] " + message;
     
     // Выводим в консоль
     std::cout << formattedMessage << std::endl;
