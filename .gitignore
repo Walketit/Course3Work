@@ -1,9 +1,5 @@
 # Сборка
 build/
-bin/
-*.o
-*.a
-*.so
 
 # Логи и БД
 logs/
@@ -13,11 +9,6 @@ logs/
 
 # IDE
 .vscode/
-.idea/
-cmake-build-debug/
-
-# Системные файлы
-.DS_Store
 
 # Doxygen
 docs/

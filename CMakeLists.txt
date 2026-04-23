@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(CourseWork)
 
-# Стандарт C++17 для современных фич
+# Стандарт C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Отладка для проверки на утечку памяти
@@ -17,7 +17,7 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/logs)
 # Поиск библиотеки SQLite3
 find_package(SQLite3 REQUIRED)
 
-# Для работы с потоками (pthread) на UNIX
+# Для работы с потоками
 find_package(Threads REQUIRED)
 
 # Серверная часть
